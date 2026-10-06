@@ -1,0 +1,44 @@
+HEBBIAN ASSOCIATION NETWORK — HOW TO RUN
+=========================================
+
+EASIEST: THE BROWSER VERSION (Windows, Mac, Linux — nothing to install)
+  Double-click "SotM Simulation.html". It opens in your web browser
+  (Chrome, Edge, Firefox or Safari). To share the simulation, send just this
+  one file.
+
+  Save downloads the trained network as a .npz file (to your Downloads folder).
+  Load (or dropping a .npz file onto the window) opens one again. These files
+  are interchangeable with the Python version below.
+
+  F11 (Ctrl+Cmd+F on a Mac) makes the browser full screen, handy for filming.
+  The simulation pauses while its browser tab is in the background.
+
+
+PYTHON VERSION (for tinkering with the code)
+  hebbian_sim.py is the original program. It needs Python with GTK4:
+
+  Linux    Double-click "Hebbian Simulation.desktop" (or run ./hebbian_sim.py).
+           On Ubuntu/Debian first:
+           sudo apt install python3-gi gir1.2-gtk-4.0 python3-gi-cairo python3-numpy
+           The .desktop file contains this folder's full path: if you move the
+           folder, edit its Exec= and Path= lines.
+  Windows  Double-click "Hebbian Simulation (Windows).bat"; the first time it
+           offers to install MSYS2 and the needed packages.
+  macOS    Double-click "Hebbian Simulation (Mac).command" (the first time:
+           right-click > Open); it uses Homebrew to install what it needs.
+
+  After editing the scenes, routines, emotional weights or constants in
+  hebbian_sim.py, run  python3 tools/build_html.py  to copy them into the
+  browser version. (Changes to how the model or drawing works are not copied
+  automatically.)
+
+
+CONTROLS (both versions)
+  Click a concept           stimulate and inspect it (click empty space to deselect)
+  Mouse wheel / pinch       zoom toward the pointer
+  Middle drag / Shift+drag  pan (one-finger drag on a touch screen)
+  Home (or 0)               reset zoom and pan
+  H                         hide/show the text and graphs (for filming)
+  Space                     pause / run
+  F9                        hide/show the controls
+  Ctrl+S / Ctrl+O           save / load a trained network (Cmd on a Mac)

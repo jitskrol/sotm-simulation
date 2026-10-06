@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Hebbian Simulation
+Comment=Hebbian association network with homeostasis
+Exec=python3 "/mnt/data/Documenten/Writing/Symphony of the Mind/Simulation/hebbian_sim.py"
+Path=/mnt/data/Documenten/Writing/Symphony of the Mind/Simulation
+Icon=applications-science
+Terminal=false
+Categories=Science;Education;

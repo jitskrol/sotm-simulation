@@ -1,0 +1,1711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symphony of the Mind - by Jits Krol</title>
+<!--
+  Hebbian association network — a 2D simulation. Open this file in any modern
+  web browser (Chrome, Edge, Firefox, Safari); nothing needs to be installed.
+
+  Concepts are nodes. Every ordered pair of concepts (A, B) has two association
+  strengths: forward A→B and backward B→A. Through Hebbian learning each strength
+  drifts toward the experienced conditional correlation  w[A→B] → P(B active | A active),
+  so "coffee → cup" and "cup → coffee" can end up with different strengths.
+
+  Each tick every concept
+    1. receives input from every other concept: max(0, activity(A) × w[A→B] − resistance)
+       plus sensory input from the current experience, clicks and (optionally) noise,
+    2. combines all input, scales it by its sensitivity and settles toward a new
+       activity level (0 … 1),
+    3. tires when active for long (fatigue), which lets thoughts wander.
+
+  Homeostasis: the mean activity of the whole network is compared with the setpoint.
+  Above it, all concepts instantly become less sensitive; below it, their
+  sensitivity creeps up.
+
+  Emotions: the mood has three opposing axes (sadness ↔ happiness, fear ↔ calm,
+  anger ↔ affection), each from −1 to +1. Most concepts are tied to one or more
+  emotions with a graded weight. Active concepts push the mood toward their poles
+  ("reactivity"), the mood relaxes back to neutral ("half-life"), and the mood makes
+  fitting concepts more sensitive and opposite ones less ("emotionality").
+
+  STDP: when concept B starts firing shortly after concept A was active, A→B
+  strengthens and B→A weakens. Routines (running → shower → getting dressed …)
+  give it order to learn, so free association runs forward through them.
+
+  While an experience is happening, associative spread is muted ("attention to the
+  world"), so learning reflects what was experienced rather than imagined.
+
+  Saved networks (.npz) are interchangeable with the Python version (hebbian_sim.py).
+-->
+<style>
+  :root {
+    --bg: #121418;
+    --panel: #1e2126;
+    --panel-2: #262a30;
+    --line: #353a42;
+    --text: #e4e6ea;
+    --text-dim: #a2a8b2;
+    --accent: #78aeff;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 12px/1.35 system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+
+  header { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex: none; }
+  header h1 { flex: 1; margin: 0; text-align: center; font-size: 13px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button:hover { background: #30353c; }
+  button.on { background: #34404f; border-color: #4b5b70; }
+
+  main { flex: 1; display: flex; min-height: 0; position: relative; }
+  #stage { flex: 1; position: relative; min-width: 0; touch-action: none; }
+  #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  aside { width: 262px; flex: none; overflow-y: auto; background: var(--panel);
+    border-left: 1px solid var(--line); padding: 8px 8px 16px; }
+  aside.hidden { display: none; }
+  details { margin-top: 6px; }
+  summary { font-weight: 700; cursor: pointer; padding: 2px 0; user-select: none; }
+  .sec { padding-left: 6px; }
+  .row { margin: 3px 0 1px; }
+  .head { display: flex; gap: 4px; align-items: baseline; }
+  .head .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .head .val { color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .head .mid { flex: 1; text-align: center; color: var(--text-dim); }
+  .dot { font-size: 10px; }
+  label.check { display: flex; gap: 6px; align-items: center; margin: 3px 0; cursor: pointer; }
+  .buttons { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+  .buttons button { padding: 2px 7px; }
+  .help { margin-top: 10px; color: var(--text-dim); font-size: 11px; }
+
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 14px;
+    margin: 0; background: transparent; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--track, #3a3f47); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--track, #3a3f47); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px;
+    margin-top: -4px; border-radius: 50%; background: #c9d9f2; border: none; }
+  input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #c9d9f2; border: none; }
+  input[type=range].axis::-webkit-slider-runnable-track { height: 6px; }
+  input[type=range].axis::-moz-range-track { height: 6px; }
+  input[type=range].axis::-webkit-slider-thumb { margin-top: -3px; }
+  input[type=range]:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+  #drop { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(18, 20, 24, 0.85); border: 2px dashed var(--accent); font-size: 16px; z-index: 5; }
+  #drop.show { display: flex; }
+
+  @media (max-width: 700px) {
+    aside { position: absolute; right: 0; top: 0; bottom: 0; z-index: 4; box-shadow: -6px 0 16px rgba(0,0,0,.5); }
+    header h1 { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <button id="run" title="Pause / run (Space)">Pause</button>
+  <button id="step" title="Advance one tick">Step</button>
+  <button id="save" title="Save the trained network (Ctrl+S / Cmd+S)">Save</button>
+  <button id="load" title="Load a saved network (Ctrl+O / Cmd+O), or drop a .npz file on the window">Load</button>
+  <input id="file" type="file" accept=".npz" hidden>
+  <h1>Symphony of the Mind - by Jits Krol</h1>
+  <button id="sidebtn" class="on" title="Show/hide controls (F9)">Controls</button>
+</header>
+<main>
+  <div id="stage"><canvas id="canvas"></canvas><div id="drop">Drop a saved network (.npz) to load it</div></div>
+  <aside id="side"></aside>
+</main>
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// The "real world" (scenes and routines) and the emotional ties of concepts.
+// Edit these lists to change what the network experiences.
+// ---------------------------------------------------------------------------
+// Recurring situations in which concepts are experienced together.
+// [name, relative frequency, concepts]
+const SCENES = [
+    // home and daily life
+    ["breakfast",         5, ["morning", "coffee", "bread", "kitchen", "cup", "sun", "toast"]],
+    ["waking up",         4, ["alarm", "bed", "morning", "tired", "shower", "coffee"]],
+    ["cooking dinner",    3, ["kitchen", "stove", "pan", "onion", "knife", "smell", "evening"]],
+    ["family dinner",     3, ["mother", "father", "home", "table", "talk", "child", "soup"]],
+    ["doing the dishes",  2, ["kitchen", "sink", "water", "plate", "tired", "evening"]],
+    ["cleaning",          2, ["home", "broom", "dust", "window", "music", "saturday"]],
+    ["laundry",           1, ["laundry", "soap", "water", "shirt", "sunday"]],
+    ["quiet night",       3, ["home", "evening", "book", "tea", "cup", "fireplace", "blanket"]],
+    ["hot bath",          1, ["bath", "water", "soap", "candle", "quiet", "towel"]],
+    ["bedtime story",     3, ["bed", "child", "book", "night", "mother", "blanket", "dream"]],
+    ["grocery shopping",  3, ["supermarket", "bread", "cheese", "milk", "apple", "queue", "money"]],
+    ["paying bills",      2, ["money", "letter", "bills", "desk", "worry", "bank"]],
+    ["moving house",      1, ["box", "home", "truck", "friend", "tired", "key"]],
+    ["lost keys",         1, ["key", "door", "pocket", "rush", "late", "morning"]],
+    ["cat at home",       2, ["cat", "sofa", "sun", "sleep", "window", "quiet"]],
+    ["reading a novel",   2, ["book", "sofa", "rain", "tea", "story", "quiet"]],
+    ["writing",           2, ["pen", "notebook", "idea", "desk", "coffee", "window", "quiet"]],
+    ["newborn",           1, ["baby", "crying", "night", "tired", "milk", "smile", "mother"]],
+    ["sick in bed",       2, ["fever", "bed", "tea", "blanket", "tired", "soup", "pain"]],
+    // work
+    ["office",            4, ["desk", "computer", "coffee", "deadline", "stress", "colleague", "email"]],
+    ["meeting",           3, ["colleague", "boss", "table", "talk", "presentation", "coffee"]],
+    ["deadline crunch",   2, ["deadline", "night", "computer", "stress", "boss", "pizza"]],
+    ["lunch break",       3, ["colleague", "bread", "cheese", "talk", "table", "coffee", "sandwich"]],
+    ["job interview",     1, ["suit", "boss", "nervous", "question", "handshake", "smile"]],
+    ["performance review", 1, ["boss", "feedback", "praise", "desk", "nervous"]],
+    ["being laid off",    1, ["boss", "letter", "money", "worry", "box", "silence"]],
+    ["promotion",         1, ["boss", "praise", "champagne", "money", "colleague", "success"]],
+    ["unfair blame",      1, ["boss", "lie", "shouting", "colleague", "injustice"]],
+    ["commute",           4, ["train", "street", "morning", "rain", "phone", "crowd", "late"]],
+    ["traffic jam",       2, ["car", "road", "radio", "late", "rush", "horn"]],
+    ["video call",        2, ["computer", "phone", "friend", "talk", "evening", "screen"]],
+    ["inbox",             3, ["email", "computer", "screen", "message", "coffee"]],
+    ["broken computer",   1, ["computer", "error", "screen", "broken", "deadline"]],
+    // school and learning
+    ["school",            2, ["child", "book", "desk", "teacher", "learn", "pencil", "classroom"]],
+    ["exam",              1, ["exam", "nervous", "pencil", "question", "teacher", "silence", "classroom"]],
+    ["studying",          2, ["book", "desk", "learn", "tea", "stress", "deadline", "library"]],
+    ["library",           1, ["library", "book", "silence", "quiet", "rain", "window"]],
+    ["schoolyard",        2, ["child", "ball", "friend", "laughter", "bell", "bully"]],
+    ["bullied",           1, ["bully", "child", "crying", "alone", "bell", "shouting"]],
+    ["music lesson",      1, ["piano", "song", "learn", "teacher", "child", "practice"]],
+    ["graduation",        1, ["diploma", "mother", "father", "success", "photo", "champagne", "speech"]],
+    // nature and weather
+    ["forest",            2, ["tree", "green", "bird", "walk", "autumn", "leaf", "moss"]],
+    ["autumn walk",       2, ["leaf", "autumn", "walk", "rain", "tree", "cold", "mushroom"]],
+    ["garden",            2, ["tree", "green", "flower", "sun", "bird", "summer", "bee"]],
+    ["gardening",         2, ["soil", "seed", "flower", "spade", "sun", "grandmother"]],
+    ["mountain hike",     1, ["mountain", "path", "view", "wind", "backpack", "tired", "sun"]],
+    ["thunderstorm",      2, ["storm", "thunder", "lightning", "rain", "dark", "window", "dog"]],
+    ["rainy day",         3, ["rain", "cloud", "umbrella", "grey", "autumn", "street", "puddle"]],
+    ["snow day",          2, ["snow", "cold", "winter", "child", "sled", "laughter", "scarf"]],
+    ["winter evening",    2, ["snow", "cold", "winter", "grey", "home", "fireplace", "scarf"]],
+    ["lake at dawn",      1, ["lake", "mist", "morning", "bird", "quiet", "boat"]],
+    ["night sky",         1, ["night", "stars", "moon", "quiet", "cold", "dream"]],
+    ["spring",            2, ["spring", "flower", "bird", "sun", "green", "bee", "blossom"]],
+    ["heatwave",          1, ["summer", "sun", "sweat", "ice cream", "shade", "tired"]],
+    // sea and travel
+    ["beach",             2, ["sun", "sea", "sand", "summer", "holiday", "swim", "shell"]],
+    ["morning swim",      1, ["swim", "cold", "morning", "sea", "laughter"]],
+    ["summer trip",       1, ["train", "holiday", "sea", "suitcase", "summer", "phone", "map"]],
+    ["airport",           1, ["airport", "plane", "suitcase", "queue", "passport", "late"]],
+    ["flight",            1, ["plane", "window", "cloud", "nervous", "turbulence", "passport"]],
+    ["foreign city",      1, ["map", "street", "stranger", "language", "photo", "holiday"]],
+    ["camping",           1, ["tent", "campfire", "stars", "night", "friend", "mosquito", "tree"]],
+    ["sailing",           1, ["boat", "wind", "sea", "sun", "rope", "laughter"]],
+    ["storm at sea",      1, ["boat", "storm", "wind", "sea", "dark", "rope"]],
+    // town and friends
+    ["market",            2, ["street", "crowd", "cheese", "flower", "bread", "talk", "apple"]],
+    ["café",              3, ["coffee", "cup", "friend", "talk", "cake", "window"]],
+    ["concert",           1, ["piano", "song", "evening", "friend", "crowd", "stage", "applause"]],
+    ["dinner party",      2, ["friend", "wine", "table", "talk", "evening", "cheese", "laughter"]],
+    ["party",             2, ["music", "dance", "friend", "wine", "crowd", "laughter", "night"]],
+    ["bar",               2, ["beer", "friend", "laughter", "music", "night", "talk"]],
+    ["festival",          1, ["music", "stage", "crowd", "summer", "dance", "beer", "sun"]],
+    ["birthday",          2, ["cake", "candle", "gift", "child", "song", "laughter", "balloon"]],
+    ["christmas",         1, ["christmas", "tree", "candle", "gift", "mother", "father", "snow", "song"]],
+    ["new year",          1, ["fireworks", "champagne", "night", "kiss", "crowd", "clock"]],
+    ["barbecue",          1, ["grill", "sausage", "beer", "summer", "friend", "smoke"]],
+    ["cinema",            1, ["film", "popcorn", "dark", "screen", "friend", "laughter"]],
+    ["museum",            1, ["painting", "museum", "silence", "art", "stranger"]],
+    ["painting at home",  1, ["painting", "brush", "colour", "window", "quiet", "art"]],
+    // love and family
+    ["wedding",           1, ["wedding", "dress", "kiss", "champagne", "dance", "mother", "speech"]],
+    ["date",              2, ["partner", "restaurant", "wine", "candle", "kiss", "evening", "nervous"]],
+    ["sofa evening",      2, ["partner", "sofa", "blanket", "film", "evening", "kiss"]],
+    ["argument",          2, ["partner", "shouting", "door", "slam", "silence", "kitchen"]],
+    ["breakup",           1, ["partner", "tears", "alone", "message", "phone", "night", "rain"]],
+    ["visiting grandma",  2, ["grandmother", "cake", "tea", "photo", "story", "clock"]],
+    ["old photos",        1, ["photo", "grandmother", "childhood", "attic", "dust", "story"]],
+    ["fishing with dad",  1, ["father", "lake", "boat", "quiet", "fish", "morning"]],
+    ["learning to cycle", 1, ["father", "bike", "child", "fall", "tears", "praise"]],
+    ["fixing the bike",   1, ["bike", "tool", "garage", "oil", "father"]],
+    ["dog walk",          3, ["dog", "walk", "park", "green", "friend", "morning", "ball"]],
+    ["playground",        2, ["child", "park", "sun", "laughter", "dog", "swing"]],
+    // body and sport
+    ["football match",    2, ["ball", "stadium", "crowd", "shouting", "goal", "friend"]],
+    ["football practice", 1, ["ball", "grass", "sweat", "coach", "child", "rain"]],
+    ["victory",           1, ["goal", "success", "applause", "crowd", "champagne"]],
+    ["gym",               2, ["gym", "sweat", "music", "tired", "mirror", "shower"]],
+    ["running",           2, ["running", "park", "morning", "sweat", "music", "breath"]],
+    ["bike ride",         2, ["bike", "road", "wind", "sun", "park", "helmet"]],
+    ["yoga",              1, ["yoga", "breath", "quiet", "mat", "candle", "morning"]],
+    ["meditation",        1, ["breath", "silence", "candle", "quiet", "mat"]],
+    // illness, danger and loss
+    ["hospital visit",    1, ["mother", "worry", "doctor", "phone", "grey", "hospital"]],
+    ["grandma in hospital", 1, ["grandmother", "hospital", "doctor", "worry", "flower", "clock"]],
+    ["funeral",           1, ["funeral", "grandmother", "tears", "black", "flower", "rain", "silence"]],
+    ["dentist",           1, ["dentist", "pain", "nervous", "waiting", "magazine"]],
+    ["accident",          1, ["car", "road", "siren", "ambulance", "blood", "pain", "hospital"]],
+    ["fire alarm",        1, ["smoke", "alarm", "stairs", "siren", "crowd", "running"]],
+    ["dark street",       1, ["dark", "street", "stranger", "footsteps", "night", "running"]],
+    ["burglary",          1, ["door", "window", "police", "stranger", "broken", "night"]],
+    ["nightmare",         1, ["nightmare", "dark", "running", "night", "footsteps", "bed"]],
+    ["basement",          1, ["spider", "basement", "dark", "dust", "stairs"]],
+    ["morning news",      3, ["news", "screen", "politics", "worry", "coffee", "morning"]],
+    ["war report",        1, ["news", "war", "smoke", "siren", "worry", "tears"]],
+    ["sleepless night",   2, ["night", "worry", "bed", "stress", "deadline", "phone", "clock"]],
+    ["bureaucracy",       1, ["queue", "form", "waiting", "clock", "letter"]],
+    ["phone scam",        1, ["stranger", "phone", "money", "bank", "lie"]],
+    // steps of daily routines (see ROUTINES)
+    ["shower",            4, ["shower", "water", "soap", "towel", "steam", "mirror"]],
+    ["getting dressed",   4, ["shirt", "mirror", "shoes", "wardrobe", "morning", "suit"]],
+    ["commute home",      3, ["train", "evening", "tired", "crowd", "phone", "street"]],
+    ["brushing teeth",    3, ["toothbrush", "mirror", "water", "night", "tired"]],
+    ["going to bed",      3, ["bed", "night", "blanket", "alarm", "sleep", "dark"]],
+    ["bath time",         2, ["child", "bath", "water", "soap", "towel", "laughter"]],
+    ["homework",          2, ["child", "pencil", "desk", "book", "tired", "question"]],
+    ["packing",           1, ["suitcase", "shirt", "passport", "map", "shoes", "rush"]],
+    ["hotel room",        1, ["hotel", "bed", "window", "view", "towel", "tired"]],
+    ["sunburn",           1, ["sun", "pain", "summer", "shade", "sea", "water"]],
+    ["sunset walk",       1, ["sunset", "sea", "sand", "partner", "quiet", "sun"]],
+    ["party preparation", 1, ["balloon", "cake", "kitchen", "child", "rush", "gift"]],
+    ["coming home",       2, ["key", "door", "home", "evening", "tired", "silence"]],
+    ["christmas shopping", 1, ["crowd", "gift", "queue", "money", "street", "cold"]],
+    ["taxi home",         1, ["car", "night", "street", "tired", "stranger", "phone"]],
+    ["hangover",          1, ["bed", "pain", "tired", "water", "coffee", "silence"]],
+    ["late for work",     1, ["late", "rush", "boss", "desk", "email", "nervous"]],
+    // emotionally charged experiences
+    ["ambulance ride",    1, ["ambulance", "siren", "blood", "pain", "heartbeat", "stranger"]],
+    ["emergency room",    1, ["hospital", "doctor", "waiting", "worry", "clock", "blood"]],
+    ["bad news call",     1, ["phone", "tears", "silence", "worry", "night", "mother"]],
+    ["empty house",       1, ["empty chair", "silence", "alone", "photo", "home", "tears"]],
+    ["feeling ill",       2, ["fever", "tired", "bed", "pain", "tea", "worry"]],
+    ["doctor's visit",    2, ["doctor", "waiting", "magazine", "worry", "question", "nervous"]],
+    ["diagnosis",         1, ["doctor", "diagnosis", "silence", "worry", "tears", "partner"]],
+    ["recovery",          1, ["hospital", "flower", "smile", "sun", "friend", "walk"]],
+    ["silent treatment",  1, ["partner", "silence", "door", "alone", "kitchen", "phone"]],
+    ["apology",           1, ["partner", "apology", "tears", "hug", "talk"]],
+    ["making up",         1, ["partner", "hug", "kiss", "laughter", "smile", "evening"]],
+    ["crying alone",      2, ["tears", "alone", "bed", "night", "crying", "rain"]],
+    ["calling a friend",  2, ["phone", "friend", "talk", "tears", "night", "tea"]],
+    ["night before the exam", 1, ["book", "nervous", "night", "coffee", "heartbeat", "desk"]],
+    ["passed exam",       1, ["exam", "success", "praise", "smile", "laughter", "friend"]],
+    ["failed exam",       1, ["exam", "letter", "tears", "alone", "silence", "teacher"]],
+    ["celebration",       2, ["champagne", "friend", "laughter", "dance", "music", "success"]],
+    ["job application",   1, ["computer", "letter", "email", "question", "nervous", "coffee"]],
+    ["waiting for the call", 1, ["phone", "clock", "nervous", "waiting", "heartbeat", "tea"]],
+    ["getting the job",   1, ["phone", "success", "smile", "laughter", "partner", "champagne"]],
+    ["rejection letter",  1, ["email", "letter", "silence", "tears", "alone"]],
+    ["telling your partner", 1, ["partner", "kitchen", "tears", "hug", "worry", "money"]],
+    ["walking home at night", 2, ["street", "night", "dark", "moon", "footsteps", "phone"]],
+    ["footsteps behind",  1, ["footsteps", "stranger", "dark", "heartbeat", "street", "running"]],
+    ["running home",      1, ["running", "heartbeat", "key", "door", "breath", "street"]],
+    ["locking the door",  1, ["door", "key", "heartbeat", "silence", "phone", "window"]],
+    ["power outage",      1, ["dark", "candle", "silence", "storm", "phone", "cold"]],
+    ["candlelight",       1, ["candle", "partner", "quiet", "blanket", "laughter", "dark"]],
+    ["defeat",            1, ["ball", "stadium", "crowd", "grey", "silence", "rain"]],
+    ["first kiss",        1, ["kiss", "partner", "heartbeat", "night", "smile", "nervous"]],
+    ["texting",           2, ["phone", "message", "smile", "partner", "bed", "night"]],
+    ["pregnancy test",    1, ["partner", "toothbrush", "heartbeat", "smile", "tears", "hug"]],
+    ["hospital birth",    1, ["hospital", "baby", "tears", "partner", "doctor", "smile", "pain"]],
+    ["sleepless baby night", 1, ["baby", "crying", "night", "tired", "milk", "partner"]],
+    ["painful evening",   1, ["pain", "tea", "blanket", "sofa", "tired"]],
+    ["police report",     1, ["police", "question", "form", "stranger", "broken", "worry"]],
+    ["talk with mother",  1, ["mother", "hug", "tears", "kitchen", "tea", "talk"]],
+    ["lost child",        1, ["park", "child", "crowd", "heartbeat", "shouting", "police"]],
+    ["found again",       1, ["child", "hug", "tears", "mother", "smile", "police"]],
+    ["sick dog",          1, ["dog", "worry", "blanket", "tired", "silence"]],
+    ["vet",               1, ["vet", "dog", "worry", "waiting", "tears"]],
+    ["burying the dog",   1, ["dog", "spade", "soil", "tears", "child", "silence"]],
+    ["wedding party",     1, ["wedding", "dance", "champagne", "music", "laughter", "speech", "cake"]],
+    ["honeymoon",         1, ["partner", "sea", "sun", "holiday", "hotel", "kiss"]],
+    ["reunion",           1, ["airport", "hug", "tears", "smile", "mother", "laughter"]],
+    ["surprise party",    1, ["friend", "surprise", "laughter", "cake", "balloon", "gift"]],
+    ["panic attack",      1, ["heartbeat", "breath", "crowd", "nervous", "alone", "train"]],
+    ["giving a speech",   1, ["speech", "crowd", "nervous", "heartbeat", "applause", "stage"]],
+    ["road rage",         1, ["car", "horn", "shouting", "fist", "late", "road"]],
+    ["cheated on",        1, ["partner", "lie", "message", "phone", "tears", "shouting"]],
+    ["comforting a friend", 2, ["friend", "hug", "tears", "tea", "talk", "sofa"]],
+    ["first steps",       1, ["baby", "laughter", "smile", "mother", "father", "applause"]],
+    ["stargazing",        1, ["stars", "partner", "night", "quiet", "kiss", "cold"]],
+    ["night in hospital", 1, ["hospital", "silence", "clock", "worry", "heartbeat", "doctor"]],
+    ["scary film",        1, ["film", "dark", "scream", "popcorn", "partner", "laughter"]],
+    ["alone at night",    1, ["creak", "dark", "alone", "night", "heartbeat", "stairs"]],
+    ["missed train",      1, ["train", "late", "rush", "shouting", "queue", "rain"]],
+    ["anniversary",       1, ["partner", "restaurant", "gift", "kiss", "candle", "wine"]],
+    ["betrayed by colleague", 1, ["colleague", "lie", "boss", "injustice", "email", "shouting"]],
+    ["protest",           1, ["crowd", "politics", "shouting", "street", "police", "injustice"]],
+    ["bee sting",         1, ["bee", "pain", "child", "crying", "summer", "flower"]],
+    ["dog bite",          1, ["dog", "stranger", "blood", "pain", "crying", "park"]],
+    ["helping a stranger", 1, ["stranger", "smile", "street", "praise", "rain", "umbrella"]],
+    ["lonely evening",    2, ["alone", "silence", "phone", "rain", "window", "tea"]],
+    ["home from school",  2, ["child", "mother", "hug", "cake", "smile", "story"]],
+    ["playing with the cat", 1, ["cat", "laughter", "sofa", "sun", "child"]],
+    ["yelled at by the boss", 1, ["boss", "shouting", "desk", "nervous", "tears", "injustice"]],
+    ["overdue bills",     1, ["bills", "letter", "money", "worry", "bank", "phone"]],
+    ["insulted",          1, ["stranger", "insult", "shouting", "fist", "street", "tears"]],
+    ["misty morning",     1, ["mist", "morning", "walk", "dog", "moss", "quiet"]],
+    ["steamy kitchen",    1, ["steam", "soup", "kitchen", "window", "rain", "tea"]],
+    ["teenage tantrum",   1, ["child", "slam", "door", "shouting", "tears", "mother"]],
+    ["summer fireworks",  1, ["fireworks", "summer", "crowd", "night", "ice cream", "laughter"]],
+    ["computer crash",    1, ["computer", "error", "deadline", "shouting", "fist", "coffee"]],
+    ["haunted by a dream", 1, ["nightmare", "bed", "heartbeat", "dark", "creak", "alone"]],
+];
+
+// Routines: scenes that usually follow one another in this order. When a scene
+// that belongs to a routine is experienced, the next step follows (with a
+// probability set by the "routine predictability" slider) after a short gap.
+const ROUTINES = [
+    ["morning routine",   ["waking up", "shower", "getting dressed", "breakfast", "commute", "office"]],
+    ["morning run",       ["running", "shower", "getting dressed", "breakfast"]],
+    ["gym session",       ["gym", "shower", "getting dressed"]],
+    ["workday",           ["office", "meeting", "lunch break", "inbox", "commute home"]],
+    ["evening at home",   ["commute home", "grocery shopping", "cooking dinner", "family dinner",
+                           "doing the dishes", "quiet night", "brushing teeth", "going to bed"]],
+    ["kids' bedtime",     ["family dinner", "bath time", "bedtime story", "sofa evening"]],
+    ["school day",        ["waking up", "breakfast", "school", "schoolyard", "home from school", "homework"]],
+    ["crunch",            ["deadline crunch", "sleepless night", "waking up", "late for work"]],
+    ["hosting dinner",    ["grocery shopping", "cooking dinner", "dinner party", "doing the dishes"]],
+    ["trip abroad",       ["packing", "airport", "flight", "foreign city", "hotel room"]],
+    ["beach day",         ["summer trip", "beach", "sunburn", "sunset walk"]],
+    ["car accident",      ["traffic jam", "accident", "ambulance ride", "emergency room", "bad news call"]],
+    ["losing grandma",    ["grandma in hospital", "bad news call", "funeral", "old photos", "empty house"]],
+    ["illness",           ["feeling ill", "doctor's visit", "diagnosis", "night in hospital", "recovery"]],
+    ["fight and make up", ["argument", "silent treatment", "apology", "making up", "sofa evening"]],
+    ["breaking up",       ["argument", "breakup", "crying alone", "calling a friend", "café"]],
+    ["exam season",       ["studying", "night before the exam", "exam", "passed exam", "celebration"]],
+    ["failing",           ["exam", "failed exam", "crying alone", "talk with mother"]],
+    ["job hunt",          ["job application", "job interview", "waiting for the call", "getting the job", "celebration"]],
+    ["rejection",         ["job interview", "waiting for the call", "rejection letter", "lonely evening"]],
+    ["laid off",          ["being laid off", "telling your partner", "overdue bills", "job application"]],
+    ["followed at night", ["walking home at night", "footsteps behind", "running home", "locking the door"]],
+    ["stormy night",      ["thunderstorm", "power outage", "candlelight", "going to bed"]],
+    ["match day",         ["football practice", "football match", "victory", "bar"]],
+    ["losing the match",  ["football match", "defeat", "bar"]],
+    ["first date",        ["getting dressed", "date", "first kiss", "walking home at night", "texting"]],
+    ["new baby",          ["pregnancy test", "hospital birth", "newborn", "sleepless baby night", "first steps"]],
+    ["birthday",          ["party preparation", "birthday", "cleaning"]],
+    ["late again",        ["lost keys", "traffic jam", "late for work", "yelled at by the boss"]],
+    ["toothache",         ["dentist", "painful evening"]],
+    ["break-in",          ["coming home", "burglary", "police report", "nightmare"]],
+    ["holidays",          ["christmas shopping", "christmas", "new year"]],
+    ["gardening year",    ["spring", "gardening", "garden", "autumn walk"]],
+    ["bullying",          ["schoolyard", "bullied", "crying alone", "talk with mother"]],
+    ["night out",         ["getting dressed", "bar", "party", "taxi home", "hangover"]],
+    ["worrying news",     ["morning news", "war report", "sleepless night"]],
+    ["lost in the park",  ["playground", "lost child", "found again"]],
+    ["losing the dog",    ["sick dog", "vet", "burying the dog", "empty house"]],
+    ["wedding day",       ["getting dressed", "wedding", "wedding party", "honeymoon"]],
+];
+
+// Emotions are three opposing axes, each running from −1 to +1.
+// (negative pole, colour, positive pole, colour)
+const AXES = [
+    ["sadness", "#5b9bf0", "happiness", "#f2c14e"],
+    ["fear",    "#a07cff", "calm",      "#4ecdc4"],
+    ["anger",   "#ef5350", "affection", "#ff6fa5"],
+];
+
+// How strongly each concept is tied to each emotion (0.1 … 1).
+// H happiness  S sadness  C calm  F fear/stress  A affection  R anger
+const EMOTION_WEIGHTS = `
+morning C.3 H.2 | coffee H.2 C.2 | bread C.2 H.1 | kitchen C.2 A.2 | cup C.3 | sun H.8 C.3
+toast H.1 | alarm F.3 R.2 | bed C.5 | tired S.3 | shower C.4 | stove A.1 | knife F.3 | smell H.2
+evening C.4 | mother A1 C.2 | father A.8 | home C.6 A.4 | table A.2 | talk A.3 | child A.6 H.4
+soup C.3 A.2 | water C.3 | dust S.1 | window C.2 | music H.6 C.2 | saturday H.4 C.2
+soap C.2 | sunday C.4 H.2 | book C.6 | tea C.8 | fireplace C.7 A.3 | blanket C.8 A.2 | bath C.9
+candle C.6 A.2 | quiet C1 | towel C.3 | night F.3 C.2 | dream C.3 H.2 | cheese H.1 | milk C.1
+apple H.1 | queue R.4 | money F.3 | letter F.2 | bills F.4 R.4 | desk F.2 | worry F.8 S.5
+bank F.2 | box S.1 | friend A.8 H.5 | rush F.4 R.3 | late F.4 R.5 | cat C.5 A.5 | sofa C.6
+sleep C1 | rain S.4 C.2 | story A.4 C.4 | notebook C.2 | idea H.4 | baby A1 H.4 | crying S1
+smile H.9 A.5 | fever S.3 F.2 | pain S.5 F.4 | computer F.2 | deadline F.6 S.3 | stress F.8 R.3
+colleague A.2 | email F.2 | boss F.4 R.3 | presentation F.5 | pizza H.3 | suit F.2 | nervous F1
+question F.2 | handshake A.2 | feedback F.4 | praise H.9 A.3 | silence S.4 C.3 | champagne H.9
+success H1 | lie R.8 S.3 | shouting R1 F.4 | injustice R1 S.3 | street F.1 | crowd F.3
+radio H.2 | horn R.8 F.2 | message A.2 | error R.6 F.2 | broken R.5 S.4 | learn H.2
+classroom F.2 | exam F.8 | library C.6 | ball H.4 | laughter H1 A.3 | bully R.8 F.7 S.4
+alone S.9 F.2 | piano C.4 H.3 | song H.6 | diploma H.8 | photo A.3 S.2 | speech F.5 H.2
+tree C.5 | green C.5 | bird C.5 H.3 | walk C.5 H.3 | autumn S.3 C.3 | leaf C.3 S.1 | moss C.8
+cold S.3 F.1 | mushroom C.2 | flower H.6 C.3 | summer H.7 | bee H.2 F.2 | soil C.3 | seed H.3
+grandmother A.9 S.3 C.3 | mountain C.5 H.4 | path C.4 | view H.6 C.6 | wind C.2 F.1
+backpack H.2 | storm F.8 | thunder F.9 | lightning F.8 | dark F.9 | dog A.6 H.4 | cloud S.2
+grey S.6 | puddle H.2 | snow C.4 H.4 | winter S.2 C.3 | sled H.7 | scarf C.3 | lake C.9
+mist C.7 S.2 | boat C.4 H.3 | stars C.8 H.3 | moon C.6 | spring H.7 | blossom H.7 C.4
+ice cream H.9 | shade C.4 | sea C.6 H.5 | sand H.4 C.3 | holiday H.9 C.4 | swim H.5 | shell H.3
+suitcase H.2 | airport F.2 H.2 | plane F.3 | turbulence F1 | stranger F.8 | tent H.3
+campfire H.6 C.5 A.3 | mosquito R.4 | cake H.8 | stage F.4 H.3 | applause H.9 | wine H.4 C.3
+dance H.9 | beer H.5 | gift H.8 A.4 | balloon H.8 | christmas H.6 A.6 | fireworks H.9
+kiss A1 H.5 | clock F.3 | grill H.3 | smoke F.5 | film H.3 | popcorn H.4 | painting C.5
+museum C.5 | art C.4 H.3 | brush C.2 | colour H.4 | wedding A1 H.8 | dress H.3 | partner A1
+restaurant H.4 A.3 | slam R1 | tears S1 | childhood A.4 S.3 H.3 | attic S.3 | fish C.3
+bike H.4 | fall F.5 S.3 | park C.5 H.4 | swing H.6 | stadium H.4 | goal H1 | grass C.4
+running F.2 H.2 | breath C1 | yoga C1 | mat C.7 | doctor F.5 | hospital F.6 S.6 | funeral S1
+black S.7 | dentist F.7 | waiting F.3 R.2 | siren F1 | ambulance F1 | blood F1 | footsteps F.9
+police F.5 | nightmare F1 | spider F.9 | basement F.6 | news F.3 | politics R.6 | war F1 S.7 R.4
+form R.3 | steam C.5 | hotel H.4 | sunset C.9 H.6 | heartbeat F.9 | empty chair S1
+diagnosis F.8 S.7 | apology A.6 S.3 | hug A1 H.5 | vet F.4 S.3 | surprise H.8 | fist R1
+scream F1 | creak F.9 | insult R1 S.3
+`;
+
+// ---------------------------------------------------------------------------
+// Model constants (same names and values as in hebbian_sim.py)
+// ---------------------------------------------------------------------------
+const EXPERIENCE_INPUT = 2.0;   // sensory drive of concepts in an experience
+const EXPERIENCE_LEN = 25;      // ticks an experience lasts
+const MEMBER_PROB = 0.85;       // chance each concept of a scene is actually present
+const NOISE_PROB = 0.000;       // chance per tick that a concept gets a spontaneous kick (was 0.003)
+const NOISE_KICK = 0.6;         // size of that kick
+const THRESHOLD = 0.15;         // input needed before a concept starts firing
+const ACT_RATE = 0.25;          // how fast activity follows its input
+const FATIGUE_BUILD = 0.04;     // how fast fatigue builds while active (was 0.02)
+const FATIGUE_RECOVER = 0.001;  // how fast it recovers (was 0.003)
+const HOMEO_RATE = 3.0;         // how fast sensitivity adapts (slow part) (was 0.005)
+const FAST_HOMEO = 5.0;         // instant desensitisation when above the setpoint
+const SENS_MIN = 0.05, SENS_MAX = 40.0;
+const EMO_GAIN = 2.5;          // log-sensitivity change of a fully tied concept at full emotion
+const EMO_RISE = 0.008;         // how fast an emotion builds while its concepts are active
+const EMO_SATURATE = 2.0;       // this much tied activity drives an emotion at full speed
+const EDGE_MIN = 0.05;          // associations weaker than this count as absent
+const MAX_FLOW_EDGES = 160;
+const MAX_STRUCT_EDGES = 900;
+const RESISTANCE_STEP = 0.005;           // motivation slider: one step of resistance
+const MOTIVATION_STEPS = 50;             // … so the slider covers resistance 0.25 … 0
+const ZOOM_MIN = 0.5, ZOOM_MAX = 12.0;
+const STRUCT_BUCKETS = [[0.12, 0.25, 0.09, 0.6], [0.25, 0.45, 0.16, 1.0], [0.45, 1.01, 0.28, 1.6]];
+const HISTORY_LEN = 500;
+
+// pole code → [axis, sign]
+const POLES = { S: [0, -1], H: [0, 1], F: [1, -1], C: [1, 1], R: [2, -1], A: [2, 1] };
+const POLE_NAMES = { S: "sad", H: "happy", F: "fear", C: "calm", R: "anger", A: "affection" };
+
+function parseEmotionWeights(text) {
+  const table = {};
+  for (const entry of text.replace(/\n/g, "|").split("|")) {
+    const words = entry.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+    const isCode = w => w[0] in POLES && /^[\d.]+$/.test(w.slice(1));
+    const codes = words.filter(isCode);
+    const name = words.filter(w => !isCode(w)).join(" ");
+    table[name] = codes.map(c => [c[0], parseFloat(c[1] === "." ? "0" + c.slice(1) : c.slice(1))]);
+  }
+  return table;
+}
+
+// small helpers
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+function weightedChoice(weights) {
+  let total = 0;
+  for (const w of weights) total += w;
+  let r = Math.random() * total;
+  for (let k = 0; k < weights.length; k++) { r -= weights[k]; if (r < 0) return k; }
+  return weights.length - 1;
+}
+function gauss() {                        // standard normal (Box–Muller)
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+// ---------------------------------------------------------------------------
+// The network
+// ---------------------------------------------------------------------------
+class Network {
+  constructor() {
+    const names = [];
+    const idx = {};
+    for (const [, , members] of SCENES)
+      for (const m of members) if (!(m in idx)) { idx[m] = names.length; names.push(m); }
+    this.names = names;
+    this.n = names.length;
+    this.idx = idx;
+    this.scenes = SCENES.map(([s, f, members]) => [s, f, members.map(m => idx[m])]);
+    this.sceneFreq = SCENES.map(([, f]) => f);
+    const sceneIdx = {};
+    SCENES.forEach(([s], k) => { sceneIdx[s] = k; });
+    this.routines = ROUTINES.map(([r, steps]) => [r, steps.map(s => sceneIdx[s])]);
+    this.sceneRoutines = new Map();       // scene → [[routine, position], …]
+    this.routines.forEach(([, steps], r) => steps.forEach((k, pos) => {
+      if (!this.sceneRoutines.has(k)) this.sceneRoutines.set(k, []);
+      this.sceneRoutines.get(k).push([r, pos]);
+    }));
+
+    // emotional ties: pos[k][i] / neg[k][i] = how strongly concept i belongs to the
+    // positive / negative pole of axis k
+    const n = this.n, K = AXES.length;
+    this.pos = Array.from({ length: K }, () => new Float64Array(n));
+    this.neg = Array.from({ length: K }, () => new Float64Array(n));
+    this.align = Array.from({ length: K }, () => new Float64Array(n));
+    this.profile = Array.from({ length: n }, () => []);
+    const table = parseEmotionWeights(EMOTION_WEIGHTS);
+    for (const name in table) {
+      if (!(name in idx)) continue;
+      const i = idx[name];
+      for (const [code, weight] of table[name]) {
+        const [k, sign] = POLES[code];
+        (sign > 0 ? this.pos : this.neg)[k][i] = weight;
+        this.profile[i].push([code, weight]);
+      }
+    }
+    for (let k = 0; k < K; k++) for (let i = 0; i < n; i++) this.align[k][i] = this.pos[k][i] - this.neg[k][i];
+
+    // parameters (controlled by the sidebar)
+    this.setpoint = 0.02;
+    this.resistance = 0.05;
+    this.learnRate = 0.005;
+    this.fatigueStrength = 4.0;
+    this.experienceGap = 50;
+    this.experiencesOn = true;
+    this.learningOn = true;
+    this.learnFree = 0.0;          // learning rate factor outside experiences
+    this.encodeGain = 0.1;         // associative spread while experiencing the world
+    this.emotionality = 1.0;       // how strongly the mood changes sensitivity
+    this.emoReactivity = 1.0;      // how strongly active concepts drive their emotion
+    this.emoHalflife = 230;        // ticks for an emotion to fade to half on its own
+    this.predictability = 0.8;     // chance the next step of a routine follows
+    this.routineGap = 10;          // ticks between steps of a routine
+    this.stdpRate = 0.2;           // spike-timing-dependent plasticity strength
+    this.stdpWindow = 40;          // ticks over which "before" still counts
+
+    // scratch buffers
+    this.assoc = new Float64Array(n);
+    this.onset = new Float64Array(n);
+    this.boostBuf = new Float64Array(n);
+    this.resetWeights();
+    this.resetActivity();
+  }
+
+  resetWeights() {
+    const n = this.n;
+    this.w = new Float64Array(n * n);      // w[i*n + j] = strength of i → j
+    this.seen = new Float64Array(n);       // times each concept was experienced
+    this.coSeen = new Float64Array(n * n); // times i and j were experienced together
+    this.nExperiences = 0;
+  }
+
+  resetActivity() {
+    const n = this.n;
+    this.a = new Float64Array(n);
+    this.fatigue = new Float64Array(n);
+    this.ext = new Float64Array(n);
+    this.pulse = new Float64Array(n);
+    this.mood = new Float64Array(AXES.length);   // −1 … +1 per axis
+    this.trace = new Float64Array(n);            // recent activity, for STDP
+    this.routine = null;                          // [routine, step] being lived through
+    this.pending = null;                          // next scene of the routine
+    this.sens = 1.0;
+    this.sensEff = 1.0;
+    this.mean = 0.0;
+    this.t = 0;
+    this.sceneName = null;
+    this.phaseLeft = 10;
+    this.history = [];
+  }
+
+  stimulate(i, amount = 2.5) { this.pulse[i] = Math.max(this.pulse[i], amount); }
+
+  experienced(i, j) {                    // real-world experienced P(j | i), or null
+    return this.seen[i] === 0 ? null : this.coSeen[i * this.n + j] / this.seen[i];
+  }
+
+  emotionBoost(out = this.boostBuf) {    // per-concept sensitivity multiplier from the mood
+    const g = EMO_GAIN * this.emotionality, n = this.n;
+    for (let i = 0; i < n; i++) {
+      let s = 0;
+      for (let k = 0; k < AXES.length; k++) s += this.mood[k] * this.align[k][i];
+      out[i] = Math.exp(g * s);
+    }
+    return out;
+  }
+
+  poleLevels() {                         // current strength (0 … 1) of each pole
+    const out = {};
+    for (const c in POLES) { const [k, s] = POLES[c]; out[c] = Math.max(0, s * this.mood[k]); }
+    return out;
+  }
+
+  flowAt(i, j) { return Math.max(0, this.a[i] * this.w[i * this.n + j] - this.resistance); }
+
+  routineLabel() {
+    if (!this.routine) return "";
+    const [r, pos] = this.routine;
+    const [name, steps] = this.routines[r];
+    return `${name} ${pos + 1}/${steps.length}`;
+  }
+
+  _schedule() {
+    this.phaseLeft -= 1;
+    if (this.phaseLeft > 0) return;
+    if (this.sceneName !== null) {                    // experience ends
+      this.sceneName = null;
+      this.ext.fill(0);
+      if (this.routine) {                             // does the routine continue?
+        const [r, pos] = this.routine;
+        const steps = this.routines[r][1];
+        if (pos + 1 < steps.length && Math.random() < this.predictability) {
+          this.routine = [r, pos + 1];
+          this.pending = steps[pos + 1];
+          this.phaseLeft = Math.max(1, Math.trunc(this.routineGap * (0.5 + Math.random())));
+          return;
+        }
+      }
+      this.routine = null;
+      this.phaseLeft = Math.max(1, Math.trunc(this.experienceGap * (0.5 + Math.random())));
+    } else if (this.experiencesOn) {                  // new experience starts
+      let k;
+      if (this.pending !== null) { k = this.pending; this.pending = null; }
+      else {
+        k = weightedChoice(this.sceneFreq);
+        const options = this.sceneRoutines.get(k);
+        this.routine = options ? options[Math.floor(Math.random() * options.length)] : null;
+      }
+      const [name, , members] = this.scenes[k];
+      let present = members.filter(() => Math.random() < MEMBER_PROB);
+      if (present.length < 2) present = members;
+      this.sceneName = name;
+      this.ext.fill(0);
+      const n = this.n;
+      for (const i of present) {
+        this.ext[i] = EXPERIENCE_INPUT;
+        this.seen[i] += 1;
+        for (const j of present) this.coSeen[i * n + j] += 1;
+      }
+      this.nExperiences += 1;
+      this.phaseLeft = EXPERIENCE_LEN;
+    } else {
+      this.phaseLeft = 10;
+    }
+  }
+
+  step() {
+    this._schedule();
+    const n = this.n, a = this.a, w = this.w, r = this.resistance;
+
+    // every concept sends activity × strength along each of its associations;
+    // the resistance of an association is subtracted, so weak signals are blocked
+    const assoc = this.assoc;
+    assoc.fill(0);
+    for (let i = 0; i < n; i++) {
+      const ai = a[i];
+      if (ai <= 0) continue;
+      const row = i * n;
+      for (let j = 0; j < n; j++) {
+        const v = ai * w[row + j] - r;
+        if (v > 0) assoc[j] += v;
+      }
+    }
+    const gainIn = this.sceneName ? this.encodeGain : 1.0;
+
+    // homeostasis, fast part: the moment total activity exceeds the setpoint,
+    // every concept becomes less sensitive (the slow part is below)
+    const over = Math.max(0, this.mean - this.setpoint) / Math.max(this.setpoint, 0.005);
+    this.sensEff = this.sens * Math.exp(-FAST_HOMEO * over);
+
+    // combine all inputs into a new activity level; sensitivity (global, times the
+    // mood's boost) scales how strongly a concept responds to its associations
+    // (sensory input from the world always gets through)
+    const boost = this.emotionBoost();
+    const onset = this.onset;
+    for (let j = 0; j < n; j++) {
+      const noise = Math.random() < NOISE_PROB ? NOISE_KICK : 0;
+      const internal = assoc[j] * gainIn + this.pulse[j] + noise;
+      const net = this.ext[j] + this.sensEff * boost[j] * internal * (1 - this.fatigue[j]);
+      const target = Math.tanh(Math.max(0, net - THRESHOLD));
+      const rise = ACT_RATE * (target - a[j]);
+      a[j] += rise;
+      onset[j] = rise > 0 ? rise : 0;          // a concept "fires" as its activity rises
+      // fatigue (0…1) builds while a concept is active and recovers slowly
+      this.fatigue[j] += FATIGUE_BUILD * this.fatigueStrength * a[j] * (1 - this.fatigue[j])
+                         - FATIGUE_RECOVER * this.fatigue[j];
+      this.pulse[j] *= 0.9;
+    }
+
+    // active concepts push each axis toward the pole they are tied to; the mood
+    // also relaxes back toward neutral on its own
+    const decay = Math.LN2 / Math.max(1, this.emoHalflife);
+    const rate = EMO_RISE * this.emoReactivity;
+    for (let k = 0; k < AXES.length; k++) {
+      let up = 0, down = 0;
+      const pk = this.pos[k], nk = this.neg[k];
+      for (let i = 0; i < n; i++) { up += pk[i] * a[i]; down += nk[i] * a[i]; }
+      up = Math.min(1, up / EMO_SATURATE);
+      down = Math.min(1, down / EMO_SATURATE);
+      const m = this.mood[k];
+      this.mood[k] = clamp(m + rate * (up * (1 - m) - down * (1 + m)) - decay * m, -1, 1);
+    }
+
+    // homeostasis, slow part: sensitivity drifts up while activity is below the
+    // setpoint and down while it is above
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += a[i];
+    this.mean = sum / n;
+    this.sens *= Math.exp(HOMEO_RATE * (this.setpoint - this.mean) / Math.max(this.setpoint, 0.005));
+    this.sens = clamp(this.sens, SENS_MIN, SENS_MAX);
+
+    if (this.learningOn) {
+      const g = this.sceneName ? 1.0 : this.learnFree;
+      if (g > 0) {
+        // Hebbian learning: w[i→j] drifts toward j's activity whenever i is active,
+        // so it converges on P(j active | i active)
+        const lr = g * this.learnRate;
+        for (let i = 0; i < n; i++) {
+          const ai = a[i];
+          if (ai <= 0.005) continue;
+          const row = i * n, f = lr * ai;
+          for (let j = 0; j < n; j++) w[row + j] += f * (a[j] - w[row + j]);
+          w[row + i] = 0;
+        }
+        // STDP: when j starts firing while i was active shortly before, i → j
+        // (outgoing from the earlier concept) strengthens and j → i (incoming to
+        // it) weakens. Simultaneous onsets cancel out.
+        if (this.stdpRate > 0) {
+          const post = [];
+          for (let j = 0; j < n; j++) if (onset[j] > 1e-4) post.push(j);
+          if (post.length) {
+            const tr = this.trace, s = g * this.stdpRate;
+            for (const j of post) {
+              const oj = s * onset[j], rowJ = j * n;
+              for (let i = 0; i < n; i++) {
+                const dw = tr[i] * oj;
+                w[i * n + j] += dw;
+                w[rowJ + i] -= dw;
+              }
+            }
+            for (const j of post) {
+              const rowJ = j * n;
+              for (let i = 0; i < n; i++) {
+                w[i * n + j] = clamp(w[i * n + j], 0, 1);
+                w[rowJ + i] = clamp(w[rowJ + i], 0, 1);
+              }
+              w[rowJ + j] = 0;
+            }
+          }
+        }
+      }
+    }
+    const win = Math.max(1, this.stdpWindow);
+    for (let i = 0; i < n; i++) this.trace[i] += (a[i] - this.trace[i]) / win;
+
+    this.t += 1;
+    this.history.push([this.mean, this.sensEff, Array.from(this.mood)]);
+    if (this.history.length > HISTORY_LEN) this.history.shift();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Layout: associated concepts attract, all concepts repel each other.
+// ---------------------------------------------------------------------------
+class Layout {
+  constructor(n) {
+    this.n = n;
+    this.pos = new Float64Array(2 * n);
+    this.vel = new Float64Array(2 * n);
+    for (let i = 0; i < n; i++) {                 // even "sunflower" spread
+      const k = i + 0.5, r = Math.sqrt(k / n) * 0.9, ang = k * Math.PI * (3 - Math.sqrt(5));
+      this.pos[2 * i] = r * Math.cos(ang);
+      this.pos[2 * i + 1] = r * Math.sin(ang);
+    }
+    this.deg = new Float64Array(n);
+    this.force = new Float64Array(2 * n);
+  }
+
+  step(w) {
+    const n = this.n, p = this.pos, deg = this.deg, f = this.force;
+    // damp hubs: a link counts less when both ends have many strong links,
+    // so richly connected concepts don't pull everything into one ball
+    let degSum = 0;
+    for (let i = 0; i < n; i++) {
+      let d = 0;
+      for (let j = 0; j < n; j++) d += w[i * n + j] + w[j * n + i];
+      deg[i] = d + 1e-3;
+      degSum += deg[i];
+    }
+    const degMean = degSum / n;
+    const rep0 = 0.1 / n;                          // scaled so any network size fits
+    for (let i = 0; i < n; i++) {
+      const xi = p[2 * i], yi = p[2 * i + 1];
+      let fx = 0, fy = 0, springs = 0;
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue;
+        const dx = xi - p[2 * j], dy = yi - p[2 * j + 1];
+        const dist = Math.sqrt(dx * dx + dy * dy) + 1e-6;
+        const s = (w[i * n + j] + w[j * n + i]) / Math.sqrt(deg[i] * deg[j]) * degMean;
+        const rd = Math.max(dist, 0.03);           // softened at close range
+        const fm = (rep0 / (rd * rd) - s * 0.1 * (dist - 0.08)) / dist;
+        fx += fm * dx;
+        fy += fm * dy;
+        springs += s;
+      }
+      fx -= xi * 0.05;                             // gravity toward centre
+      fy -= yi * 0.05;
+      // nodes held by many strong springs move more carefully; without this,
+      // well-trained networks overshoot and never settle
+      const pre = 1 + springs * 0.1;
+      f[2 * i] = fx / pre;
+      f[2 * i + 1] = fy / pre;
+    }
+    for (let k = 0; k < 2 * n; k++) {
+      this.vel[k] = (this.vel[k] + f[k] * 0.2) * 0.7;
+      p[k] = clamp(p[k] + clamp(this.vel[k], -0.03, 0.03), -1.05, 1.05);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Colours
+// ---------------------------------------------------------------------------
+const hexRgb = h => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16) / 255);
+const BG = [0.07, 0.08, 0.10];
+const EDGE_COL = [0.51, 0.57, 0.65];
+const HOT_STOPS = [[0.0, [0.16, 0.22, 0.30]], [0.35, [0.85, 0.35, 0.15]],
+                   [0.7, [1.0, 0.75, 0.2]], [1.0, [1.0, 0.98, 0.85]]];
+function heat(x) {
+  x = clamp(x, 0, 1);
+  for (let k = 0; k < HOT_STOPS.length - 1; k++) {
+    const [x0, c0] = HOT_STOPS[k], [x1, c1] = HOT_STOPS[k + 1];
+    if (x <= x1) { const t = (x - x0) / (x1 - x0); return c0.map((a, m) => a + (c1[m] - a) * t); }
+  }
+  return HOT_STOPS[HOT_STOPS.length - 1][1];
+}
+const rgba = (c, a = 1) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a})`;
+const POLE_COLOR = {};
+for (const [neg, negC, pos, posC] of AXES) { POLE_COLOR[neg] = hexRgb(negC); POLE_COLOR[pos] = hexRgb(posC); }
+const CODE_COLOR = {};
+for (const c in POLES) { const [k, s] = POLES[c]; CODE_COLOR[c] = POLE_COLOR[AXES[k][s < 0 ? 0 : 2]]; }
+
+// ---------------------------------------------------------------------------
+// Saving and loading: .npz files (zip of .npy arrays), compatible with numpy
+// ---------------------------------------------------------------------------
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+async function streamThrough(bytes, stream) {
+  const out = new Response(new Blob([bytes]).stream().pipeThrough(stream));
+  return new Uint8Array(await out.arrayBuffer());
+}
+
+function npyEncode(descr, shape, dataBytes) {
+  const shapeStr = shape.length === 0 ? "()" : shape.length === 1 ? `(${shape[0]},)` : `(${shape.join(", ")})`;
+  let header = `{'descr': '${descr}', 'fortran_order': False, 'shape': ${shapeStr}, }`;
+  const total = 10 + header.length + 1;
+  header += " ".repeat((64 - (total % 64)) % 64) + "\n";
+  const out = new Uint8Array(10 + header.length + dataBytes.length);
+  out.set([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59, 1, 0], 0);         // \x93NUMPY v1.0
+  out[8] = header.length & 0xFF; out[9] = header.length >> 8;
+  for (let i = 0; i < header.length; i++) out[10 + i] = header.charCodeAt(i);
+  out.set(dataBytes, 10 + header.length);
+  return out;
+}
+const f8 = (arr, shape) => npyEncode("<f8", shape, new Uint8Array(Float64Array.from(arr).buffer));
+const i8 = v => npyEncode("<i8", [], new Uint8Array(BigInt64Array.from([BigInt(v)]).buffer));
+function strArray(list) {
+  const width = Math.max(1, ...list.map(s => [...s].length));
+  const data = new Uint32Array(list.length * width);
+  list.forEach((s, k) => [...s].forEach((ch, m) => { data[k * width + m] = ch.codePointAt(0); }));
+  return npyEncode(`<U${width}`, [list.length], new Uint8Array(data.buffer));
+}
+
+function npyDecode(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes[0] !== 0x93 || String.fromCharCode(...bytes.slice(1, 6)) !== "NUMPY") throw new Error("not an .npy array");
+  const major = bytes[6];
+  const hlen = major === 1 ? dv.getUint16(8, true) : dv.getUint32(8, true);
+  const start = major === 1 ? 10 : 12;
+  const header = new TextDecoder("latin1").decode(bytes.slice(start, start + hlen));
+  const descr = /'descr':\s*'([^']+)'/.exec(header)[1];
+  if (/'fortran_order':\s*True/.test(header)) throw new Error("fortran-ordered arrays are not supported");
+  const shape = /'shape':\s*\(([^)]*)\)/.exec(header)[1].split(",").map(s => s.trim()).filter(Boolean).map(Number);
+  const raw = bytes.slice(start + hlen);                                // copy, so it is aligned
+  const count = shape.reduce((x, y) => x * y, 1);
+  let data;
+  if (descr === "<f8") data = new Float64Array(raw.buffer, 0, count);
+  else if (descr === "<f4") data = Float64Array.from(new Float32Array(raw.buffer, 0, count));
+  else if (descr === "<i8") data = Array.from(new BigInt64Array(raw.buffer, 0, count), Number);
+  else if (descr === "<i4") data = Array.from(new Int32Array(raw.buffer, 0, count));
+  else if (/^<U\d+$/.test(descr)) {
+    const width = +descr.slice(2), u = new Uint32Array(raw.buffer, 0, count * width);
+    data = [];
+    for (let k = 0; k < count; k++) {
+      let s = "";
+      for (let m = 0; m < width; m++) { const c = u[k * width + m]; if (!c) break; s += String.fromCodePoint(c); }
+      data.push(s);
+    }
+  } else throw new Error(`unsupported array type ${descr}`);
+  return { shape, data };
+}
+
+async function zipWrite(files) {       // files: [[name, Uint8Array], …]
+  const canDeflate = typeof CompressionStream !== "undefined";
+  const parts = [], central = [];
+  let offset = 0;
+  for (const [name, data] of files) {
+    const nameBytes = new TextEncoder().encode(name);
+    const crc = crc32(data);
+    const body = canDeflate ? await streamThrough(data, new CompressionStream("deflate-raw")) : data;
+    const local = new Uint8Array(30 + nameBytes.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0, true);
+    lv.setUint16(8, canDeflate ? 8 : 0, true); lv.setUint32(14, crc, true);
+    lv.setUint32(18, body.length, true); lv.setUint32(22, data.length, true);
+    lv.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30);
+    const cen = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(cen.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+    cv.setUint16(10, canDeflate ? 8 : 0, true); cv.setUint32(16, crc, true);
+    cv.setUint32(20, body.length, true); cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBytes.length, true); cv.setUint32(42, offset, true);
+    cen.set(nameBytes, 46);
+    parts.push(local, body);
+    central.push(cen);
+    offset += local.length + body.length;
+  }
+  const cenSize = central.reduce((s, c) => s + c.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cenSize, true); ev.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end], { type: "application/zip" });
+}
+
+async function zipRead(buffer) {       // → { name: Uint8Array }
+  const bytes = new Uint8Array(buffer), dv = new DataView(buffer);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--)
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("not a saved network (.npz) file");
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = {};
+  for (let k = 0; k < count; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error("damaged .npz file");
+    const method = dv.getUint16(p + 10, true);
+    let csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+    const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    let lofs = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(bytes.slice(p + 46, p + 46 + nlen));
+    // zip64 extra field (numpy writes these): replaces values stored as 0xFFFFFFFF
+    let x = p + 46 + nlen;
+    const xend = x + xlen;
+    while (x + 4 <= xend) {
+      const id = dv.getUint16(x, true), sz = dv.getUint16(x + 2, true);
+      if (id === 0x0001) {
+        let q = x + 4;
+        if (usize === 0xFFFFFFFF) { usize = Number(dv.getBigUint64(q, true)); q += 8; }
+        if (csize === 0xFFFFFFFF) { csize = Number(dv.getBigUint64(q, true)); q += 8; }
+        if (lofs === 0xFFFFFFFF) { lofs = Number(dv.getBigUint64(q, true)); q += 8; }
+      }
+      x += 4 + sz;
+    }
+    const dataStart = lofs + 30 + dv.getUint16(lofs + 26, true) + dv.getUint16(lofs + 28, true);
+    const raw = bytes.slice(dataStart, dataStart + csize);
+    if (method === 0) out[name] = raw;
+    else if (method === 8) out[name] = await streamThrough(raw, new DecompressionStream("deflate-raw"));
+    else throw new Error(`unsupported compression in ${name}`);
+    p += 46 + nlen + xlen + clen;
+  }
+  return out;
+}
+
+async function saveNetwork(net, layout) {
+  const n = net.n;
+  return zipWrite([
+    ["version.npy", i8(1)],
+    ["names.npy", strArray(net.names)],
+    ["w.npy", f8(net.w, [n, n])],
+    ["seen.npy", f8(net.seen, [n])],
+    ["co_seen.npy", f8(net.coSeen, [n, n])],
+    ["trace.npy", f8(net.trace, [n])],
+    ["n_experiences.npy", i8(net.nExperiences)],
+    ["t.npy", i8(net.t)],
+    ["mood.npy", f8(net.mood, [net.mood.length])],
+    ["pos.npy", f8(layout.pos, [n, 2])],
+  ]);
+}
+
+// Load a saved network. Concepts are matched by name, so a save still loads after
+// the scenes were edited: new concepts start untrained, removed ones are dropped.
+async function loadNetwork(net, buffer) {
+  const files = await zipRead(buffer);
+  const get = key => { if (!files[key + ".npy"]) throw new Error(`missing "${key}" in file`); return npyDecode(files[key + ".npy"]); };
+  const names = get("names").data, w = get("w").data, coSeen = get("co_seen").data;
+  const seen = get("seen").data, trace = get("trace").data, pos = get("pos").data, mood = get("mood").data;
+  const m = names.length, n = net.n;
+  const src = [], dst = [];
+  names.forEach((name, k) => { if (name in net.idx) { src.push(k); dst.push(net.idx[name]); } });
+  net.resetWeights();
+  net.resetActivity();
+  for (let a = 0; a < src.length; a++) {
+    const si = src[a], di = dst[a];
+    for (let b = 0; b < src.length; b++) {
+      net.w[di * n + dst[b]] = w[si * m + src[b]];
+      net.coSeen[di * n + dst[b]] = coSeen[si * m + src[b]];
+    }
+    net.seen[di] = seen[si];
+    net.trace[di] = trace[si];
+  }
+  net.nExperiences = get("n_experiences").data[0];
+  net.t = get("t").data[0];
+  if (mood.length === net.mood.length) net.mood.set(mood);
+  const layoutPos = new Float64Array(2 * n);
+  for (let i = 0; i < 2 * n; i++) layoutPos[i] = gauss() * 0.3;   // unmatched start near the middle
+  for (let a = 0; a < src.length; a++) {
+    layoutPos[2 * dst[a]] = pos[2 * src[a]];
+    layoutPos[2 * dst[a] + 1] = pos[2 * src[a] + 1];
+  }
+  return { layoutPos, matched: src.length, total: m };
+}
+
+// ---------------------------------------------------------------------------
+// Application: sidebar, input, drawing
+// ---------------------------------------------------------------------------
+const net = new Network();
+let layout = new Layout(net.n);
+const app = {
+  selected: null, running: true, allLabels: true, overlays: true,
+  stepsPerSec: 30, stepAcc: 0, lastTime: performance.now(), frame: 0,
+  view: null, structCache: null, notice: null,
+  zoom: 1, pan: [0, 0], pointer: null,
+  screenPos: new Float64Array(2 * net.n), radius: new Float64Array(net.n), boost: new Float64Array(net.n),
+};
+const speedOf = v => v <= 0 ? 0 : 0.5 * Math.pow(1.087, v);
+
+// --- sidebar --------------------------------------------------------------
+const side = document.getElementById("side");
+let syncing = false;
+function section(title, open) {
+  const d = document.createElement("details");
+  d.open = open;
+  d.innerHTML = `<summary>${title}</summary>`;
+  const box = document.createElement("div");
+  box.className = "sec";
+  d.appendChild(box);
+  side.appendChild(d);
+  return box;
+}
+function slider(box, title, lo, hi, init, setter, fmt, tip) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `<div class="head"><span class="name"></span><span class="val"></span></div>
+                   <input type="range" min="${lo}" max="${hi}" step="1">`;
+  row.querySelector(".name").textContent = title;
+  const val = row.querySelector(".val"), input = row.querySelector("input");
+  if (tip) row.title = tip;
+  input.value = init;
+  val.textContent = fmt(+input.value);
+  input.addEventListener("input", () => { const v = +input.value; val.textContent = fmt(v); setter(v); });
+  setter(+input.value);
+  box.appendChild(row);
+  return input;
+}
+function check(box, label, init, setter) {
+  const l = document.createElement("label");
+  l.className = "check";
+  l.innerHTML = `<input type="checkbox"> <span></span>`;
+  l.querySelector("span").textContent = label;
+  const c = l.querySelector("input");
+  c.checked = init;
+  c.addEventListener("change", () => setter(c.checked));
+  box.appendChild(l);
+}
+function axisSlider(box, k) {
+  const [neg, negC, pos, posC] = AXES[k];
+  const cap = s => s[0].toUpperCase() + s.slice(1);
+  const row = document.createElement("div");
+  row.className = "row";
+  row.title = `Current mood between ${neg} and ${pos}. It moves on its own as concepts are active; drag to set it.`;
+  row.innerHTML = `<div class="head"><span><span class="dot" style="color:${negC}">●</span> ${cap(neg)}</span>
+      <span class="mid">neutral</span><span>${cap(pos)} <span class="dot" style="color:${posC}">●</span></span></div>
+      <input type="range" class="axis" min="-100" max="100" step="1" value="0">`;
+  const input = row.querySelector("input"), mid = row.querySelector(".mid");
+  input.style.setProperty("--track", `linear-gradient(to right, ${negC}, #3a3f47 50%, ${posC})`);
+  const show = v => { mid.textContent = Math.abs(v) < 3 ? "neutral" : v < 0 ? `◀ ${Math.abs(v)}%` : `${v}% ▶`; };
+  input.addEventListener("input", () => { show(+input.value); if (!syncing) net.mood[k] = +input.value / 100; });
+  input.dragging = false;
+  input.addEventListener("pointerdown", () => { input.dragging = true; });
+  window.addEventListener("pointerup", () => { input.dragging = false; });
+  input.show = show;
+  box.appendChild(row);
+  return input;
+}
+
+slider(side, "Simulation speed (ticks/s)", 0, 100, 45, v => { app.stepsPerSec = speedOf(v); }, v => speedOf(v).toFixed(0));
+
+let box = section("Network", true);
+slider(box, "Homeostasis setpoint", 0, 150, net.setpoint * 1000, v => { net.setpoint = v / 1000; }, v => `${(v / 10).toFixed(1)} %`);
+slider(box, "Motivation (resistance)", 0, MOTIVATION_STEPS, MOTIVATION_STEPS - Math.round(net.resistance / RESISTANCE_STEP),
+  v => { net.resistance = (MOTIVATION_STEPS - v) * RESISTANCE_STEP; },
+  v => `${(v / MOTIVATION_STEPS * 100).toFixed(0)}% (${((MOTIVATION_STEPS - v) * RESISTANCE_STEP).toFixed(3)})`,
+  "High motivation = low resistance: activation passes through associations more easily. " +
+  "The number in brackets is the resistance subtracted from every signal.");
+slider(box, "Fatigue", 0, 600, net.fatigueStrength * 100, v => { net.fatigueStrength = v / 100; }, v => (v / 100).toFixed(1));
+
+box = section("Emotions", true);
+slider(box, "Emotionality", 0, 300, net.emotionality * 100, v => { net.emotionality = v / 100; }, v => `${v} %`,
+  "How strongly the mood makes fitting concepts more sensitive and concepts of the opposite pole less sensitive");
+slider(box, "Emotional reactivity", 0, 300, net.emoReactivity * 100, v => { net.emoReactivity = v / 100; }, v => `${v} %`,
+  "How strongly the activity of emotionally charged concepts builds up their emotion");
+slider(box, "Emotion half-life", 20, 2000, net.emoHalflife, v => { net.emoHalflife = v; }, v => `${v}`,
+  "Ticks for an emotion to fade to half on its own");
+const moodSliders = AXES.map((_, k) => axisSlider(box, k));
+
+box = section("Learning", false);
+slider(box, "Learning rate", 0, 100, net.learnRate * 1000, v => { net.learnRate = v / 1000; }, v => (v / 1000).toFixed(3));
+slider(box, "Learn from own thoughts", 0, 100, net.learnFree * 100, v => { net.learnFree = v / 100; }, v => `${v} %`);
+slider(box, "Attention to the world", 0, 100, (1 - net.encodeGain) * 100, v => { net.encodeGain = 1 - v / 100; }, v => `${v} %`);
+slider(box, "Pause between experiences", 5, 400, net.experienceGap, v => { net.experienceGap = v; }, v => `${v}`);
+check(box, "Feed real-world experiences", true, on => { net.experiencesOn = on; });
+check(box, "Hebbian learning on", true, on => { net.learningOn = on; });
+
+box = section("Routines & STDP", true);
+slider(box, "Routine predictability", 0, 100, net.predictability * 100, v => { net.predictability = v / 100; }, v => `${v} %`,
+  "Chance that the next step of a routine follows the current one");
+slider(box, "Gap within routines", 1, 100, net.routineGap, v => { net.routineGap = v; }, v => `${v}`);
+slider(box, "STDP strength", 0, 100, net.stdpRate * 100, v => { net.stdpRate = v / 100; }, v => (v / 100).toFixed(2),
+  "When B fires after A: A→B strengthens, B→A weakens. 0 = off");
+slider(box, "STDP window", 2, 200, net.stdpWindow, v => { net.stdpWindow = v; }, v => `${v}`,
+  "Ticks over which an earlier activation still counts as 'before'");
+
+box = section("View & reset", false);
+check(box, "Show all labels", true, on => { app.allLabels = on; });
+const btnRow = document.createElement("div");
+btnRow.className = "buttons";
+for (const [label, tip, fn] of [
+  ["Forget", "Forget all associations", () => net.resetWeights()],
+  ["Calm", "Reset activity, fatigue and emotions", () => net.resetActivity()],
+  ["Re-layout", "Start the layout over", () => relayout()],
+]) {
+  const b = document.createElement("button");
+  b.textContent = label; b.title = tip; b.addEventListener("click", fn);
+  btnRow.appendChild(b);
+}
+box.appendChild(btnRow);
+const help = document.createElement("div");
+help.className = "help";
+help.textContent = "Click a concept to stimulate it and inspect it; click empty space to deselect. " +
+  "Coloured rings show emotion links. Hover a slider for details. Mouse wheel or pinch = zoom, " +
+  "middle button or Shift + drag = pan, Home = reset view, H = hide overlays. " +
+  "Space = pause, F9 = hide controls, F11 = full screen (most browsers).";
+side.appendChild(help);
+
+function syncMoodSliders() {
+  syncing = true;
+  moodSliders.forEach((s, k) => {
+    if (s.dragging) return;
+    const v = Math.round(net.mood[k] * 100);
+    s.value = v; s.show(v);
+  });
+  syncing = false;
+}
+
+// --- header buttons, saving -------------------------------------------------
+const runBtn = document.getElementById("run");
+function toggleRun() { app.running = !app.running; runBtn.textContent = app.running ? "Pause" : "Run"; }
+runBtn.addEventListener("click", toggleRun);
+document.getElementById("step").addEventListener("click", () => net.step());
+const sideBtn = document.getElementById("sidebtn");
+function toggleSide() { side.classList.toggle("hidden"); sideBtn.classList.toggle("on", !side.classList.contains("hidden")); }
+sideBtn.addEventListener("click", toggleSide);
+if (window.innerWidth < 700) toggleSide();
+
+function showNotice(text, seconds = 4) { app.notice = [text, performance.now() + seconds * 1000]; }
+async function save() {
+  try {
+    const blob = await saveNetwork(net, layout);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `network-tick${net.t}.npz`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    showNotice(`Saved ${a.download} (to your downloads)`);
+  } catch (e) { showNotice(`Could not save: ${e.message}`); }
+}
+async function loadFile(file) {
+  try {
+    const { layoutPos, matched, total } = await loadNetwork(net, await file.arrayBuffer());
+    relayout();
+    layout.pos.set(layoutPos);
+    app.structCache = null;
+    app.selected = null;
+    syncMoodSliders();
+    let msg = `Loaded ${file.name}`;
+    if (matched < net.n || matched < total) msg += ` — ${matched} of ${net.n} concepts matched`;
+    showNotice(msg);
+  } catch (e) { showNotice(`Could not load: ${e.message}`); }
+}
+const fileInput = document.getElementById("file");
+document.getElementById("save").addEventListener("click", save);
+document.getElementById("load").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ""; });
+const drop = document.getElementById("drop");
+window.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("show"); });
+window.addEventListener("dragleave", e => { if (!e.relatedTarget) drop.classList.remove("show"); });
+window.addEventListener("drop", e => {
+  e.preventDefault(); drop.classList.remove("show");
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+function relayout() { layout = new Layout(net.n); app.view = null; resetCamera(); }
+function resetCamera() { app.zoom = 1; app.pan = [0, 0]; }
+
+// --- keyboard ---------------------------------------------------------------
+window.addEventListener("keydown", e => {
+  const command = e.ctrlKey || e.metaKey;
+  const key = e.key.toLowerCase();
+  if (command && key === "s") { e.preventDefault(); save(); return; }
+  if (command && key === "o") { e.preventDefault(); fileInput.click(); return; }
+  if (command || e.altKey) return;
+  if (key === "h") app.overlays = !app.overlays;
+  else if (e.key === "Home" || e.key === "0") resetCamera();
+  else if (e.key === "F9") { e.preventDefault(); toggleSide(); }
+  else if (e.key === " " && !(document.activeElement instanceof HTMLButtonElement)) { e.preventDefault(); toggleRun(); }
+});
+
+// --- mouse, trackpad and touch on the canvas ---------------------------------
+const stage = document.getElementById("stage");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+function zoomAt(mx, my, z) {      // zoom to z, keeping the screen point (mx, my) in place
+  z = clamp(z, ZOOM_MIN, ZOOM_MAX);
+  app.pan = [mx - (mx - app.pan[0]) * (z / app.zoom), my - (my - app.pan[1]) * (z / app.zoom)];
+  app.zoom = z;
+}
+const localXY = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const [mx, my] = localXY(e);
+  const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+  const dy = e.deltaY * unit;
+  // trackpad pinch arrives as a wheel event with ctrlKey held
+  const factor = e.ctrlKey ? Math.exp(-dy * 0.01) : Math.pow(1.15, -dy / 100);
+  zoomAt(mx, my, app.zoom * factor);
+}, { passive: false });
+let gestureStart = 1;                       // Safari's own pinch events
+canvas.addEventListener("gesturestart", e => { e.preventDefault(); gestureStart = app.zoom; });
+canvas.addEventListener("gesturechange", e => {
+  e.preventDefault();
+  const [mx, my] = localXY(e);
+  zoomAt(mx, my, gestureStart * e.scale);
+});
+
+function selectAt(x, y) {
+  // undo the camera to find what was clicked in layout (fitted) coordinates
+  x = (x - app.pan[0]) / app.zoom; y = (y - app.pan[1]) / app.zoom;
+  let best = -1, bestD = Infinity;
+  for (let i = 0; i < net.n; i++) {
+    const d = Math.hypot(app.screenPos[2 * i] - x, app.screenPos[2 * i + 1] - y) - app.radius[i];
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (bestD < 8 / app.zoom) { app.selected = best; net.stimulate(best); }
+  else app.selected = null;
+}
+const pointers = new Map();               // active pointers on the canvas
+let panning = null;                       // { start pan, start pointer }
+let pinch = null;                         // two-finger touch: { zoom, dist, mid, pan }
+canvas.addEventListener("pointerdown", e => {
+  const [x, y] = localXY(e);
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x, y, sx: x, sy: y, moved: false, touch: e.pointerType === "touch" });
+  if (e.pointerType === "touch") {
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { zoom: app.zoom, dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+                mid: [(a.x + b.x) / 2, (a.y + b.y) / 2], pan: [...app.pan] };
+      panning = null;
+    }
+    return;                                // single touch: tap selects, drag pans (decided on move/up)
+  }
+  if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    e.preventDefault();
+    panning = { pan: [...app.pan], x, y };
+    canvas.style.cursor = "grabbing";
+  } else if (e.button === 0) selectAt(x, y);
+});
+canvas.addEventListener("pointermove", e => {
+  const [x, y] = localXY(e);
+  app.pointer = [x, y];
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  p.x = x; p.y = y;
+  if (Math.hypot(x - p.sx, y - p.sy) > 6) p.moved = true;
+  if (pinch && pointers.size >= 2) {
+    const [a, b] = [...pointers.values()];
+    const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+    const mid = [(a.x + b.x) / 2, (a.y + b.y) / 2];
+    const z = clamp(pinch.zoom * dist / pinch.dist, ZOOM_MIN, ZOOM_MAX);
+    // the point under the starting midpoint follows the fingers
+    app.pan = [mid[0] - (pinch.mid[0] - pinch.pan[0]) * (z / pinch.zoom),
+               mid[1] - (pinch.mid[1] - pinch.pan[1]) * (z / pinch.zoom)];
+    app.zoom = z;
+    return;
+  }
+  if (p.touch && p.moved && !panning) panning = { pan: [...app.pan], x: p.sx, y: p.sy };
+  if (panning) app.pan = [panning.pan[0] + x - panning.x, panning.pan[1] + y - panning.y];
+});
+function endPointer(e) {
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if (p && p.touch && !p.moved && !pinch) selectAt(p.x, p.y);
+  if (pointers.size < 2) pinch = null;
+  if (pointers.size === 0) { panning = null; canvas.style.cursor = ""; }
+}
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("pointerleave", () => { app.pointer = null; });
+canvas.addEventListener("auxclick", e => e.preventDefault());
+canvas.addEventListener("mousedown", e => { if (e.button === 1) e.preventDefault(); });   // no autoscroll
+
+// --- drawing ----------------------------------------------------------------
+const SANS = 'system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif';
+const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace';
+let cssW = 0, cssH = 0, dpr = 1;
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  cssW = stage.clientWidth; cssH = stage.clientHeight;
+  canvas.width = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+  app.structCache = null;
+}
+new ResizeObserver(resize).observe(stage);
+
+function percentile(values, q) {
+  const s = Float64Array.from(values).sort();
+  const pos = (s.length - 1) * q / 100, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return s[lo] + (s[hi] - s[lo]) * (pos - lo);
+}
+
+function draw() {
+  const n = net.n, W = cssW, H = cssH;
+  if (W < 10 || H < 10) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = rgba(BG);
+  ctx.fillRect(0, 0, W, H);
+
+  const graphH = 100, margin = 36, top = 70;
+  // fit the layout to the window (smoothed, so the view doesn't jitter); robust
+  // bounds, so a few outlying concepts don't squeeze everything else
+  const xs = [], ys = [];
+  for (let i = 0; i < n; i++) { xs.push(layout.pos[2 * i]); ys.push(layout.pos[2 * i + 1]); }
+  const box = [percentile(xs, 2), percentile(ys, 2), percentile(xs, 98), percentile(ys, 98)];
+  app.view = app.view ? app.view.map((v, k) => v * 0.9 + box[k] * 0.1) : box;
+  const lo = [app.view[0], app.view[1]];
+  const hi = [Math.max(app.view[2], lo[0] + 1e-3), Math.max(app.view[3], lo[1] + 1e-3)];
+  const availW = W - 2 * margin, availH = H - graphH - top - margin;
+  const sp = app.screenPos;
+  for (let i = 0; i < n; i++) {
+    sp[2 * i] = clamp(margin + (layout.pos[2 * i] - lo[0]) / (hi[0] - lo[0]) * availW, margin, W - margin);
+    sp[2 * i + 1] = clamp(top + (layout.pos[2 * i + 1] - lo[1]) / (hi[1] - lo[1]) * availH, top * 0.6, H - graphH - 12);
+  }
+  net.emotionBoost(app.boost);
+  for (let i = 0; i < n; i++) {
+    const tilt = clamp(Math.log(app.boost[i]), -1, 1);            // how open/closed the mood makes it
+    app.radius[i] = (5 + 9 * net.a[i]) * (1 + 0.25 * tilt);
+  }
+
+  // the faint background lines are costly, so they are redrawn only every few
+  // frames and reused in between; while zooming or panning the cached picture
+  // is stretched to fit and redrawn sharp shortly after
+  const z = app.zoom, [px, py] = app.pan;
+  let c = app.structCache;
+  const moved = c && (c.z !== z || c.px !== px || c.py !== py);
+  if (!c || app.frame - c.frame >= 15 || (moved && app.frame - c.frame >= 4)) {
+    const off = c ? c.canvas : document.createElement("canvas");
+    off.width = canvas.width; off.height = canvas.height;
+    const oc = off.getContext("2d");
+    oc.setTransform(dpr * z, 0, 0, dpr * z, dpr * px, dpr * py);
+    drawStructure(oc);
+    c = app.structCache = { canvas: off, frame: app.frame, z, px, py };
+  }
+  ctx.save();
+  const s = z / c.z;
+  ctx.translate(px - c.px * s, py - c.py * s);
+  ctx.scale(s, s);
+  ctx.drawImage(c.canvas, 0, 0, W, H);
+  ctx.restore();
+
+  ctx.save();                                   // network drawn through the camera
+  ctx.translate(px, py);
+  ctx.scale(z, z);
+  drawFlows();
+  drawNodes();
+  ctx.restore();
+  if (!app.overlays) return;
+  drawStatus();
+  if (app.selected !== null) drawSelected(W);
+  drawGraphs(12, H - graphH + 4, W - 24, graphH - 14);
+}
+
+function drawStructure(c) {   // all learned associations as faint straight lines (both directions merged)
+  const n = net.n, w = net.w, sp = app.screenPos;
+  const pairs = [];
+  for (let i = 0; i < n; i++)
+    for (let j = i + 1; j < n; j++) {
+      const s = Math.max(w[i * n + j], w[j * n + i]);
+      if (s >= STRUCT_BUCKETS[0][0]) pairs.push([s, i, j]);
+    }
+  if (pairs.length > MAX_STRUCT_EDGES) {   // keep only the strongest
+    pairs.sort((a, b) => b[0] - a[0]);
+    pairs.length = MAX_STRUCT_EDGES;
+  }
+  for (const [blo, bhi, alpha, width] of STRUCT_BUCKETS) {
+    c.beginPath();
+    let any = false;
+    for (const [s, i, j] of pairs) {
+      if (s < blo || s >= bhi) continue;
+      c.moveTo(sp[2 * i], sp[2 * i + 1]);
+      c.lineTo(sp[2 * j], sp[2 * j + 1]);
+      any = true;
+    }
+    if (!any) continue;
+    c.strokeStyle = rgba(EDGE_COL, alpha);
+    c.lineWidth = width;
+    c.stroke();
+  }
+}
+
+function drawFlows() {  // directed curves for associations carrying activation now, and for the selection
+  const n = net.n, w = net.w;
+  let edges = [];
+  for (let i = 0; i < n; i++) {
+    if (net.a[i] <= 0) continue;
+    for (let j = 0; j < n; j++) {
+      const f = net.flowAt(i, j);
+      if (f > 0.02) edges.push([i, j, f, false]);
+    }
+  }
+  if (edges.length > MAX_FLOW_EDGES) { edges.sort((a, b) => b[2] - a[2]); edges.length = MAX_FLOW_EDGES; }
+  const s = app.selected;
+  if (s !== null) {
+    const have = new Set(edges.map(e => e[0] * n + e[1]));
+    for (let j = 0; j < n; j++) {
+      if (w[s * n + j] > 0.08) { const k = s * n + j; if (have.has(k)) edges.find(e => e[0] * n + e[1] === k)[3] = true; else edges.push([s, j, net.flowAt(s, j), true]); }
+      if (w[j * n + s] > 0.08) { const k = j * n + s; if (have.has(k)) edges.find(e => e[0] * n + e[1] === k)[3] = true; else edges.push([j, s, net.flowAt(j, s), true]); }
+    }
+  }
+  edges.sort((a, b) => (a[2] + w[a[0] * n + a[1]] * 0.01) - (b[2] + w[b[0] * n + b[1]] * 0.01));
+  for (const [i, j, f, hl] of edges) drawEdge(i, j, w[i * n + j], f, hl);
+}
+
+function drawEdge(i, j, w, flow, highlight) {
+  const sp = app.screenPos, rp = app.radius[i], rq = app.radius[j];
+  const px = sp[2 * i], py = sp[2 * i + 1], qx = sp[2 * j], qy = sp[2 * j + 1];
+  const dx = qx - px, dy = qy - py;
+  if (Math.hypot(dx, dy) < 1) return;
+  // control point bulges to the right-hand side of the travel direction
+  const cx = (px + qx) / 2 - dy * 0.12, cy = (py + qy) / 2 + dx * 0.12;
+  // trim to circle edges along the curve's end tangents
+  const l1 = Math.hypot(cx - px, cy - py);
+  const ax = px + (cx - px) / l1 * rp, ay = py + (cy - py) / l1 * rp;
+  const l2 = Math.hypot(qx - cx, qy - cy);
+  const tx = (qx - cx) / l2, ty = (qy - cy) / l2;
+  const bx = qx - tx * (rq + 3), by = qy - ty * (rq + 3);
+  const f = Math.min(1, flow * 3), g = 1 - f;
+  const alpha = Math.min(1, 0.25 + 0.6 * w + 0.6 * f + (highlight ? 0.3 : 0));
+  const col = highlight && f < 0.1 ? rgba([0.85, 0.9, 1.0], alpha)
+    : rgba([EDGE_COL[0] * g + f, EDGE_COL[1] * g + 0.7 * f, EDGE_COL[2] * g + 0.25 * f], alpha);
+  ctx.strokeStyle = col; ctx.fillStyle = col;
+  ctx.lineWidth = 0.6 + 3.5 * w;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.bezierCurveTo(ax + (cx - ax) * 2 / 3, ay + (cy - ay) * 2 / 3, bx + (cx - bx) * 2 / 3, by + (cy - by) * 2 / 3, bx, by);
+  ctx.stroke();
+  const size = 4 + 5 * w, sx = -ty * size * 0.5, sy = tx * size * 0.5;
+  const kx = bx - tx * size, ky = by - ty * size;
+  ctx.beginPath();
+  ctx.moveTo(bx, by); ctx.lineTo(kx + sx, ky + sy); ctx.lineTo(kx - sx, ky - sy); ctx.closePath();
+  ctx.fill();
+}
+
+function drawNodes() {
+  const n = net.n, sp = app.screenPos, levels = net.poleLevels();
+  const tilts = Array.from(app.boost, b => clamp(Math.log(b), -1.5, 1.5));
+  for (let i = 0; i < n; i++) {
+    const x = sp[2 * i], y = sp[2 * i + 1], r = app.radius[i], act = net.a[i];
+    if (act > 0.05) {                                    // glow
+      ctx.fillStyle = `rgba(255,153,51,${0.18 * act})`;
+      ctx.beginPath(); ctx.arc(x, y, r * 2, 0, 2 * Math.PI); ctx.fill();
+    }
+    // resting colour shows the mood's effect: brighter when the mood opens a
+    // concept up, sunk into the background when it closes it
+    let col = heat(act);
+    const t = tilts[i];
+    if (t > 0) col = col.map((cv, m) => cv + ([0.45, 0.52, 0.62][m] - cv) * Math.min(1, t / 1.2) * (1 - act));
+    else if (t < 0) col = col.map((cv, m) => cv + (BG[m] - cv) * Math.min(0.85, -t / 1.2) * (1 - act));
+    ctx.fillStyle = rgba(col);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill();
+    if (net.ext[i] > 0) {                                // currently experienced
+      ctx.strokeStyle = "rgb(115,204,255)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+    }
+    const ties = net.profile[i];
+    if (ties.length) {                                   // emotion ring segments
+      const seg = 2 * Math.PI / ties.length, gap = ties.length > 1 ? 0.15 : 0;
+      ties.forEach(([code, wt], k) => {
+        const lvl = levels[code];
+        ctx.strokeStyle = rgba(CODE_COLOR[code], 0.2 + 0.3 * wt + 0.5 * lvl);
+        ctx.lineWidth = 0.5 + 1.2 * wt + 3 * wt * lvl;
+        ctx.beginPath();
+        ctx.arc(x, y, r + 2.5, -Math.PI / 2 + k * seg + gap, -Math.PI / 2 + (k + 1) * seg - gap);
+        ctx.stroke();
+      });
+    }
+    if (i === app.selected) {
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, r + 6, 0, 2 * Math.PI); ctx.stroke();
+    }
+  }
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  for (let i = 0; i < n; i++) {                          // labels on top
+    const act = net.a[i], big = act > 0.15 || i === app.selected;
+    if (!(big || app.allLabels)) continue;
+    ctx.font = big ? `bold 12px ${SANS}` : `9px ${SANS}`;
+    const alpha = big ? 0.95 : Math.min(0.85, Math.max(0.12, 0.4 + 0.3 * tilts[i]));
+    ctx.fillStyle = rgba([0.9, 0.92, 0.95], alpha);
+    ctx.fillText(net.names[i], sp[2 * i], sp[2 * i + 1] + app.radius[i] + (big ? 13 : 10));
+  }
+  ctx.textAlign = "start";
+}
+
+function drawStatus() {
+  ctx.fillStyle = rgba(BG, 0.75);                        // keeps the text readable over a zoomed network
+  ctx.fillRect(6, 6, 300, 92);
+  ctx.font = `bold 15px ${SANS}`;
+  ctx.fillStyle = rgba([0.88, 0.9, 0.94]);
+  const title = net.sceneName ? `Experiencing: ${net.sceneName}` : "Free association";
+  ctx.fillText(title, 14, 24);
+  const routine = net.routineLabel();
+  if (routine) {
+    const x = 14 + ctx.measureText(title).width;
+    ctx.font = `12px ${SANS}`;
+    ctx.fillStyle = rgba([0.6, 0.8, 1.0], 0.9);
+    ctx.fillText(`   ·  ${routine}` + (net.pending !== null ? "  (next step coming)" : ""), x, 24);
+  }
+  ctx.font = `11px ${MONO}`;
+  ctx.fillStyle = rgba([0.75, 0.78, 0.82], 0.9);
+  const lines = [`tick ${net.t}   experiences ${net.nExperiences}`,
+                 `activity ${(net.mean * 100).toFixed(1).padStart(4)}% (target ${(net.setpoint * 100).toFixed(1)}%)`,
+                 `sensitivity ${net.sensEff.toFixed(2)}`];
+  if (!app.running || app.stepsPerSec === 0) lines.push("paused");
+  if (Math.abs(app.zoom - 1) > 1e-3 || app.pan[0] || app.pan[1]) lines.push(`zoom ${app.zoom.toFixed(1)}×  (Home to reset)`);
+  if (app.notice && performance.now() < app.notice[1]) lines.push(app.notice[0]);
+  lines.forEach((line, k) => ctx.fillText(line, 14, 42 + 14 * k));
+}
+
+function drawSelected(width) {
+  const i = app.selected, n = net.n, w = net.w;
+  const others = [];
+  for (let j = 0; j < n; j++) if (j !== i) others.push(j);
+  const score = j => w[i * n + j] + w[j * n + i] + (net.experienced(i, j) || 0) + (net.experienced(j, i) || 0);
+  others.sort((a, b) => score(b) - score(a));
+  const levels = net.poleLevels();
+  const lines = [[net.names[i], null],
+                 [`activity ${net.a[i].toFixed(2)}  fatigue ${net.fatigue[i].toFixed(2)}`, null],
+                 [`mood effect ×${app.boost[i].toFixed(2)} sensitivity  seen ${Math.trunc(net.seen[i])}×`, null]];
+  for (const [code, wt] of net.profile[i])
+    lines.push([`  ${POLE_NAMES[code].padEnd(9)} tie ${wt.toFixed(1)}   mood now ${(levels[code] * 100).toFixed(0).padStart(3)}%`, CODE_COLOR[code]]);
+  if (!net.profile[i].length) lines.push(["  emotionally neutral", null]);
+  lines.push(["", null], ["learned (experienced together)", null],
+             ["".padEnd(11) + "→ out".padStart(12) + "← in".padStart(12), null]);
+  const fmt = v => v === null ? " -- " : v.toFixed(2);
+  for (const j of others.slice(0, 14)) {
+    const fwd = w[i * n + j], back = w[j * n + i];
+    if (fwd < 0.005 && back < 0.005 && !net.coSeen[i * n + j]) continue;
+    lines.push([`${net.names[j].slice(0, 10).padEnd(10)} ${fwd.toFixed(2)}(${fmt(net.experienced(i, j))}) ` +
+                `${back.toFixed(2)}(${fmt(net.experienced(j, i))})`, null]);
+  }
+  const bw = 300, lh = 14, x0 = width - bw - 12, y0 = 12;
+  ctx.fillStyle = "rgba(13,15,20,0.85)";
+  ctx.fillRect(x0, y0, bw, lh * lines.length + 12);
+  lines.forEach(([text, col], k) => {
+    ctx.font = (k === 0 ? "bold " : "") + `11px ${MONO}`;
+    ctx.fillStyle = k === 0 ? "#fff" : rgba(col || [0.8, 0.83, 0.87]);
+    ctx.fillText(text, x0 + 8, y0 + 16 + k * lh);
+  });
+}
+
+function drawGraphs(x, y, w, h) {
+  const hist = net.history, gap = 12, w1 = w * 0.55, w2 = w - w1 - gap;
+  for (const [gx, gw] of [[x, w1], [x + w1 + gap, w2]]) {
+    ctx.fillStyle = rgba(BG);                            // solid, so a zoomed network doesn't show through
+    ctx.fillRect(gx, y, gw, h);
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.fillRect(gx, y, gw, h);
+  }
+  ctx.font = `10px ${SANS}`;
+  ctx.fillStyle = rgba([0.6, 0.65, 0.7]);
+  ctx.fillText("activity (orange) vs setpoint (dashed) · sensitivity, log (blue)", x + 6, y + 12);
+  ctx.fillText("mood: happy / calm / affection ↑   sad / fear / anger ↓", x + w1 + gap + 6, y + 12);
+  const mid = y + 8 + (h - 8) / 2;
+  ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x + w1 + gap, mid); ctx.lineTo(x + w, mid); ctx.stroke();
+
+  const topV = Math.max(0.05, net.setpoint * 3);
+  const sy = y + h - Math.min(1, net.setpoint / topV) * h;
+  ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(x, sy); ctx.lineTo(x + w1, sy); ctx.stroke();
+  ctx.setLineDash([]);
+  if (hist.length < 2) return;
+
+  const plot = (gx, gw, values, toY) => {
+    const dx = gw / (HISTORY_LEN - 1), x0 = gx + gw - (values.length - 1) * dx;
+    ctx.beginPath();
+    values.forEach((v, k) => (k ? ctx.lineTo : ctx.moveTo).call(ctx, x0 + k * dx, toY(v)));
+    ctx.stroke();
+  };
+  const lo = Math.log(SENS_MIN), hi = Math.log(SENS_MAX);
+  ctx.strokeStyle = "rgba(115,179,255,0.8)"; ctx.lineWidth = 1.2;
+  plot(x, w1, hist.map(r => r[1]), s => y + h - (Math.log(s) - lo) / (hi - lo) * h);
+  ctx.strokeStyle = "rgb(255,153,51)"; ctx.lineWidth = 1.6;
+  plot(x, w1, hist.map(r => r[0]), m => y + h - Math.min(1, m / topV) * h);
+
+  const dx = w2 / (HISTORY_LEN - 1), x0 = x + w1 + gap + w2 - (hist.length - 1) * dx;
+  const half = (h - 12) / 2;
+  ctx.lineWidth = 1.6;
+  AXES.forEach(([neg, , pos], k) => {                    // colour follows the pole it leans to
+    const vals = hist.map(r => r[2][k]);
+    for (const [sign, name] of [[1, pos], [-1, neg]]) {
+      ctx.strokeStyle = rgba(POLE_COLOR[name]);
+      ctx.beginPath();
+      let drawing = false;
+      vals.forEach((v, j) => {
+        const X = x0 + j * dx, Y = mid - v * half;
+        if (v * sign > 0 || (j && vals[j - 1] * sign > 0)) {
+          if (drawing) ctx.lineTo(X, Y); else ctx.moveTo(X, Y);
+          drawing = true;
+        } else drawing = false;
+      });
+      ctx.stroke();
+    }
+  });
+}
+
+// --- main loop ---------------------------------------------------------------
+function frame(now) {
+  const elapsed = Math.min(0.25, (now - app.lastTime) / 1000);   // real time, so speed stays true
+  app.lastTime = now;                                              // even when drawing is slow
+  if (app.running) {
+    app.stepAcc += app.stepsPerSec * elapsed;
+    const k = Math.min(Math.floor(app.stepAcc), 300);
+    app.stepAcc -= Math.floor(app.stepAcc);
+    for (let s = 0; s < k; s++) net.step();
+  }
+  layout.step(net.w);
+  draw();
+  app.frame += 1;
+  if (app.frame % 6 === 0) syncMoodSliders();
+  requestAnimationFrame(frame);
+}
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
